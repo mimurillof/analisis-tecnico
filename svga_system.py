@@ -13,13 +13,9 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
 import json
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import json
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -41,31 +37,92 @@ class SVGASystem:
         self.signals = {}
         self.metrics = {}
         
-    def download_data(self, ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
+    def download_data(self, ticker: str, period: str = "1y", interval: str = "1d", max_retries: int = 3) -> pd.DataFrame:
         """
-        Descarga datos OHLCV de yfinance
+        Descarga datos OHLCV de yfinance con reintentos y estrategias de fallback
         
         Args:
             ticker: Símbolo del activo
             period: Período de datos (1mo, 3mo, 6mo, 1y, 2y, 5y)
             interval: Intervalo de datos (1d, 1wk, 1mo)
+            max_retries: Número máximo de reintentos
         
         Returns:
             DataFrame con datos OHLCV estandarizados
         """
         print(f" Descargando datos para {ticker}...")
-        df = yf.download(ticker, period=period, interval=interval, progress=False)
         
-        # Estandarizar nombres de columnas para pandas-ta
-        df.columns = [col[0].lower() if isinstance(col, tuple) else col.lower() for col in df.columns]
+        # Estrategias de fallback (en orden de preferencia)
+        strategies = [
+            (period, interval),  # Intento original
+        ]
         
-        # Asegurar que tenemos las columnas necesarias
-        required_cols = ['open', 'high', 'low', 'close', 'volume']
-        for col in required_cols:
-            if col not in df.columns:
-                raise ValueError(f"Columna '{col}' no encontrada en los datos de {ticker}")
+        # Si falla con el período original, intentar períodos más cortos
+        if period == "2y":
+            strategies.append(("1y", interval))
+            strategies.append(("6mo", interval))
+        elif period == "1y":
+            strategies.append(("6mo", interval))
+            strategies.append(("3mo", interval))
         
-        return df
+        last_error = None
+        
+        for strategy_idx, (p, i) in enumerate(strategies):
+            for attempt in range(max_retries):
+                try:
+                    if strategy_idx > 0 and attempt == 0:
+                        print(f"   ⚠️ Intentando con período reducido: {p}")
+                    elif attempt > 0:
+                        print(f"   🔄 Reintento {attempt + 1}/{max_retries}...")
+                    
+                    # Descargar con timeout
+                    df = yf.download(ticker, period=p, interval=i, progress=False, timeout=15)
+                    
+                    # Verificar que el DataFrame no esté vacío
+                    if df is None or df.empty:
+                        raise ValueError(f"No se obtuvieron datos para {ticker} (DataFrame vacío)")
+                    
+                    # Verificar que tengamos suficientes datos
+                    if len(df) < 20:
+                        raise ValueError(f"Datos insuficientes para {ticker} (solo {len(df)} barras)")
+                    
+                    # Estandarizar nombres de columnas para pandas-ta
+                    df.columns = [col[0].lower() if isinstance(col, tuple) else col.lower() for col in df.columns]
+                    
+                    # Asegurar que tenemos las columnas necesarias
+                    required_cols = ['open', 'high', 'low', 'close', 'volume']
+                    missing_cols = [col for col in required_cols if col not in df.columns]
+                    
+                    if missing_cols:
+                        raise ValueError(f"Columnas faltantes en {ticker}: {missing_cols}")
+                    
+                    # Verificar que no haya demasiados NaN
+                    nan_ratio = df[required_cols].isna().sum().sum() / (len(df) * len(required_cols))
+                    if nan_ratio > 0.1:  # Más del 10% de NaN
+                        raise ValueError(f"Demasiados valores NaN en {ticker} ({nan_ratio*100:.1f}%)")
+                    
+                    # Rellenar NaN si hay pocos
+                    if df[required_cols].isna().any().any():
+                        df[required_cols] = df[required_cols].ffill().bfill()
+                    
+                    # Éxito
+                    if strategy_idx > 0 or attempt > 0:
+                        print(f"   ✅ Datos descargados exitosamente ({len(df)} barras)")
+                    
+                    return df
+                    
+                except Exception as e:
+                    last_error = str(e)
+                    if attempt < max_retries - 1:
+                        # Esperar antes del siguiente reintento (backoff exponencial)
+                        wait_time = 2 ** attempt
+                        time.sleep(wait_time)
+                    continue
+        
+        # Si llegamos aquí, todos los intentos fallaron
+        error_msg = f"Error descargando {ticker} después de {max_retries} intentos con todas las estrategias: {last_error}"
+        print(f"   ❌ {error_msg}")
+        raise Exception(error_msg)
     
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -584,7 +641,15 @@ class SVGASystem:
             "assets": {}
         }
         
-        for ticker in self.market_tickers:
+        successful = 0
+        failed = 0
+        failed_tickers = []
+        
+        total_tickers = len(self.market_tickers)
+        
+        for idx, ticker in enumerate(self.market_tickers, 1):
+            print(f"📊 Procesando {ticker} ({idx}/{total_tickers})...")
+            
             try:
                 # Descargar datos
                 df = self.download_data(ticker, period="2y", interval="1wk")  # Semanal para perspectiva macro
@@ -621,9 +686,26 @@ class SVGASystem:
                     "latest_metrics": self._extract_latest_metrics(df)
                 }
                 
+                successful += 1
+                print(f"✅ {ticker} procesado exitosamente\n")
+                
             except Exception as e:
-                print(f" Error procesando {ticker}: {str(e)}\n")
-                market_results["assets"][ticker] = {"error": str(e)}
+                failed += 1
+                failed_tickers.append(ticker)
+                error_msg = str(e)
+                print(f"❌ Error procesando {ticker}: {error_msg}\n")
+                market_results["assets"][ticker] = {"error": error_msg}
+        
+        # Resumen final
+        print("="*80)
+        print(f"📊 RESUMEN ANÁLISIS DE MERCADO:")
+        print(f"   ✅ Exitosos: {successful}/{total_tickers}")
+        print(f"   ❌ Fallidos: {failed}/{total_tickers}")
+        
+        if failed_tickers:
+            print(f"\n   Activos fallidos: {', '.join(failed_tickers)}")
+        
+        print("="*80 + "\n")
         
         return market_results
     
