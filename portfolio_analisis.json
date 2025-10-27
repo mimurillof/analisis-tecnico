@@ -1,0 +1,248 @@
+{
+  "portfolio": {
+    "analysis_timestamp": "2025-10-27T09:57:59.171963",
+    "portfolio_composition": [
+      "PAXG-USD",
+      "^GSPC",
+      "BTC-USD",
+      "ETH-USD",
+      "BNB-USD",
+      "SOL-USD"
+    ],
+    "assets": {
+      "PAXG-USD": {
+        "signals": {
+          "ticker": "PAXG-USD",
+          "timestamp": "2025-10-27 00:00:00",
+          "price_current": 3990.7333984375,
+          "filters": {
+            "long_term_trend": "ALCISTA",
+            "market_regime": "TENDENCIA_MODERADA",
+            "adx_value": 31.952727166222875
+          },
+          "alerts": [
+            {
+              "type": "SIN_SEÑALES",
+              "description": "No se detectaron condiciones de alerta en este momento",
+              "priority": "LOW"
+            }
+          ],
+          "signal": 0,
+          "priority": "LOW",
+          "rsi_value": 45.21930335338099,
+          "macd_histogram": -39.18846381813812,
+          "recommendation": "MANTENER"
+        },
+        "chart_file": "chart_PAXG_USD.html",
+        "latest_metrics": {
+          "price": 3990.7333984375,
+          "volume": 387476192.0,
+          "ema_12": 4111.4101509081065,
+          "ema_26": 4062.9247766266526,
+          "ema_50": 3934.276913868821,
+          "ema_200": 3505.612725830324,
+          "rsi": 45.21930335338099,
+          "macd": 48.485374281453915,
+          "macd_histogram": -39.18846381813812,
+          "adx": 31.952727166222875,
+          "obv": 2081031718.0
+        }
+      },
+      "^GSPC": {
+        "signals": {
+          "ticker": "^GSPC",
+          "timestamp": "2025-10-27 00:00:00",
+          "price_current": 6850.8701171875,
+          "filters": {
+            "long_term_trend": "ALCISTA",
+            "market_regime": "LATERAL",
+            "adx_value": 19.922461292003106
+          },
+          "alerts": [
+            {
+              "type": "MERCADO_LATERAL",
+              "description": "ADX bajo (19.92) indica mercado sin tendencia clara. Señales de seguimiento de tendencia no recomendadas.",
+              "priority": "LOW"
+            }
+          ],
+          "signal": 0,
+          "priority": "LOW",
+          "rsi_value": 66.36566780741344,
+          "macd_histogram": 8.680478495685904,
+          "recommendation": "MANTENER"
+        },
+        "chart_file": "chart_GSPC.html",
+        "latest_metrics": {
+          "price": 6850.8701171875,
+          "volume": 886533156.0,
+          "ema_12": 6730.962132853122,
+          "ema_26": 6684.144021008889,
+          "ema_50": 6599.448040937705,
+          "ema_200": 6200.0108485169885,
+          "rsi": 66.36566780741344,
+          "macd": 46.8181118442335,
+          "macd_histogram": 8.680478495685904,
+          "adx": 19.922461292003106,
+          "obv": 188689823156.0
+        }
+      },
+      "BTC-USD": {
+        "signals": {
+          "ticker": "BTC-USD",
+          "timestamp": "2025-10-27 00:00:00",
+          "price_current": 114718.8984375,
+          "filters": {
+            "long_term_trend": "ALCISTA",
+            "market_regime": "TENDENCIA_DÉBIL",
+            "adx_value": 22.677573535489667
+          },
+          "alerts": [
+            {
+              "type": "SIN_SEÑALES",
+              "description": "No se detectaron condiciones de alerta en este momento",
+              "priority": "LOW"
+            }
+          ],
+          "signal": 0,
+          "priority": "LOW",
+          "rsi_value": 54.33922935599206,
+          "macd_histogram": 524.2514767380871,
+          "recommendation": "MANTENER"
+        },
+        "chart_file": "chart_BTC_USD.html",
+        "latest_metrics": {
+          "price": 114718.8984375,
+          "volume": 58026405888.0,
+          "ema_12": 111841.3276562951,
+          "ema_26": 112705.87661391139,
+          "ema_50": 113439.82164973262,
+          "ema_200": 109123.08595814739,
+          "rsi": 54.33922935599206,
+          "macd": -864.54895761628,
+          "macd_histogram": 524.2514767380871,
+          "adx": 22.677573535489667,
+          "obv": 735141795719.0
+        }
+      },
+      "ETH-USD": {
+        "signals": {
+          "ticker": "ETH-USD",
+          "timestamp": "2025-10-27 00:00:00",
+          "price_current": 4141.07177734375,
+          "filters": {
+            "long_term_trend": "ALCISTA",
+            "market_regime": "LATERAL",
+            "adx_value": 19.506910248249834
+          },
+          "alerts": [
+            {
+              "type": "MERCADO_LATERAL",
+              "description": "ADX bajo (19.51) indica mercado sin tendencia clara. Señales de seguimiento de tendencia no recomendadas.",
+              "priority": "LOW"
+            }
+          ],
+          "signal": 0,
+          "priority": "LOW",
+          "rsi_value": 52.25046448815909,
+          "macd_histogram": 28.469498737701286,
+          "recommendation": "MANTENER"
+        },
+        "chart_file": "chart_ETH_USD.html",
+        "latest_metrics": {
+          "price": 4141.07177734375,
+          "volume": 38387089408.0,
+          "ema_12": 4011.7169171611977,
+          "ema_26": 4076.8708268475457,
+          "ema_50": 4128.816458923485,
+          "ema_200": 3642.317435089034,
+          "rsi": 52.25046448815909,
+          "macd": -65.15390968634802,
+          "macd_histogram": 28.469498737701286,
+          "adx": 19.506910248249834,
+          "obv": 199741138084.0
+        }
+      },
+      "BNB-USD": {
+        "signals": {
+          "ticker": "BNB-USD",
+          "timestamp": "2025-10-27 00:00:00",
+          "price_current": 1135.5040283203125,
+          "filters": {
+            "long_term_trend": "ALCISTA",
+            "market_regime": "LATERAL",
+            "adx_value": 18.323146141748744
+          },
+          "alerts": [
+            {
+              "type": "MERCADO_LATERAL",
+              "description": "ADX bajo (18.32) indica mercado sin tendencia clara. Señales de seguimiento de tendencia no recomendadas.",
+              "priority": "LOW"
+            }
+          ],
+          "signal": 0,
+          "priority": "LOW",
+          "rsi_value": 52.29959995223008,
+          "macd_histogram": -8.120571904806244,
+          "recommendation": "MANTENER"
+        },
+        "chart_file": "chart_BNB_USD.html",
+        "latest_metrics": {
+          "price": 1135.5040283203125,
+          "volume": 4246380800.0,
+          "ema_12": 1124.1217174012336,
+          "ema_26": 1116.6690901415304,
+          "ema_50": 1067.3287480393958,
+          "ema_200": 861.6240368438706,
+          "rsi": 52.29959995223008,
+          "macd": 7.452627259703149,
+          "macd_histogram": -8.120571904806244,
+          "adx": 18.323146141748744,
+          "obv": 53253949329.0
+        }
+      },
+      "SOL-USD": {
+        "signals": {
+          "ticker": "SOL-USD",
+          "timestamp": "2025-10-27 00:00:00",
+          "price_current": 199.09255981445312,
+          "filters": {
+            "long_term_trend": "ALCISTA",
+            "market_regime": "LATERAL",
+            "adx_value": 17.30236234765091
+          },
+          "alerts": [
+            {
+              "type": "MERCADO_LATERAL",
+              "description": "ADX bajo (17.30) indica mercado sin tendencia clara. Señales de seguimiento de tendencia no recomendadas.",
+              "priority": "LOW"
+            }
+          ],
+          "signal": 0,
+          "priority": "LOW",
+          "rsi_value": 49.67255382387162,
+          "macd_histogram": 1.7416120946445242,
+          "recommendation": "MANTENER"
+        },
+        "chart_file": "chart_SOL_USD.html",
+        "latest_metrics": {
+          "price": 199.09255981445312,
+          "volume": 6376550912.0,
+          "ema_12": 194.3590708058549,
+          "ema_26": 199.30464185417367,
+          "ema_50": 202.77665075126873,
+          "ema_200": 190.7842703622724,
+          "rsi": 49.67255382387162,
+          "macd": -4.9455710483187545,
+          "macd_histogram": 1.7416120946445242,
+          "adx": 17.30236234765091,
+          "obv": 30106070041.0
+        }
+      }
+    }
+  },
+  "metadata": {
+    "system": "SVGA v1.0",
+    "author": "AIDA",
+    "timestamp": "2025-10-27T09:58:05.676204"
+  }
+}

@@ -1,0 +1,10 @@
+pandas>=2.0.0
+numpy>=1.24.0
+pandas-ta>=0.3.14b
+yfinance>=0.2.0
+plotly>=5.14.0
+kaleido>=0.2.1
+TA-Lib
+supabase>=2.0.0
+python-dotenv>=1.0.0
+dotenv
