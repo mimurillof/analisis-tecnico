@@ -941,6 +941,10 @@ Este análisis es generado automáticamente por el Sistema SVGA basado en princi
 
 """
         
+        # Contadores para validación
+        total_assets = len(market_results.get("assets", {}))
+        assets_processed = 0
+        
         # Análisis de mercado general
         for ticker, data in market_results["assets"].items():
             if "error" in data:
@@ -969,6 +973,15 @@ Este análisis es generado automáticamente por el Sistema SVGA basado en princi
                 report += f"- {priority_emoji} **{alert['type']}:** {alert['description']}\n"
             
             report += f"\n📈 [Ver gráfico interactivo]({data['chart_file']})\n\n---\n\n"
+            
+            assets_processed += 1
+        
+        # Validación final
+        if assets_processed < total_assets:
+            print(f"\n⚠️ ADVERTENCIA: Solo se procesaron {assets_processed}/{total_assets} activos en el informe de mercado MD")
+            print(f"   Esto puede indicar un problema en la generación del informe")
+        else:
+            print(f"✅ Informe de mercado generado correctamente: {assets_processed} activos procesados")
         
         # Métricas clave
         report += """---
