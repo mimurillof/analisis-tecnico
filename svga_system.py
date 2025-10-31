@@ -17,7 +17,16 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 import warnings
+import pytz
 warnings.filterwarnings('ignore')
+
+# Intentar importar pandas-market-calendars para verificación de días hábiles
+try:
+    import pandas_market_calendars as mcal
+    MARKET_CALENDAR_AVAILABLE = True
+except ImportError:
+    MARKET_CALENDAR_AVAILABLE = False
+    print("⚠️ pandas-market-calendars no disponible. Verificación de días hábiles limitada.")
 
 
 class SVGASystem:
@@ -36,6 +45,88 @@ class SVGASystem:
         self.data = {}
         self.signals = {}
         self.metrics = {}
+    
+    @staticmethod
+    def get_last_trading_date() -> datetime.date:
+        """
+        Obtiene la fecha del último día hábil del mercado (NYSE/NASDAQ)
+        
+        Returns:
+            datetime del último día hábil
+        """
+        today = datetime.now(pytz.timezone('America/New_York'))
+        
+        if MARKET_CALENDAR_AVAILABLE:
+            try:
+                nyse = mcal.get_calendar('NYSE')
+                # Obtener los últimos 5 días hábiles
+                schedule = nyse.schedule(start_date=today - timedelta(days=7), end_date=today)
+                
+                if not schedule.empty:
+                    last_trading = schedule.index[-1]
+                    # Convertir a datetime sin timezone para comparación
+                    return last_trading.to_pydatetime().replace(tzinfo=None).date()
+            except Exception as e:
+                print(f"⚠️ Error usando market calendar: {e}. Usando método alternativo.")
+        
+        # Método alternativo: verificar manualmente
+        # El mercado está cerrado los sábados y domingos
+        # También está cerrado en algunos feriados, pero por simplicidad
+        # asumimos que si hoy no es sábado/domingo, es día hábil
+        current = today.date()
+        
+        # Si es sábado (5) o domingo (6), retroceder al viernes
+        if current.weekday() == 5:  # Sábado
+            return current - timedelta(days=1)
+        elif current.weekday() == 6:  # Domingo
+            return current - timedelta(days=2)
+        
+        # Si es lunes y antes de las 4 PM ET, usar el viernes anterior
+        # (el mercado abre a las 9:30 AM ET y cierra a las 4:00 PM ET)
+        if current.weekday() == 0 and today.hour < 16:
+            return current - timedelta(days=3)
+        
+        # Si es un día hábil pero antes del cierre del mercado (4 PM ET),
+        # usar el día anterior
+        if today.hour < 16:
+            return current - timedelta(days=1)
+        
+        return current
+    
+    @staticmethod
+    def is_data_current(df: pd.DataFrame, max_days_behind: int = 1) -> Tuple[bool, Optional[str]]:
+        """
+        Verifica si los datos están actualizados comparando la última fecha con el último día de trading
+        
+        Args:
+            df: DataFrame con datos descargados
+            max_days_behind: Número máximo de días que pueden estar desfasados (default: 1)
+        
+        Returns:
+            Tuple (is_current: bool, message: str)
+        """
+        if df.empty or df.index.empty:
+            return False, "DataFrame vacío"
+        
+        # Obtener la última fecha de los datos
+        last_data_date = df.index[-1]
+        
+        # Convertir a date si es datetime
+        if isinstance(last_data_date, pd.Timestamp):
+            last_data_date = last_data_date.date()
+        elif isinstance(last_data_date, datetime):
+            last_data_date = last_data_date.date()
+        
+        # Obtener el último día de trading esperado
+        expected_trading_date = SVGASystem.get_last_trading_date()
+        
+        # Comparar fechas
+        days_diff = (expected_trading_date - last_data_date).days
+        
+        if days_diff <= max_days_behind:
+            return True, f"Datos actualizados (última fecha: {last_data_date}, esperado: {expected_trading_date})"
+        else:
+            return False, f"Datos desfasados: última fecha es {last_data_date}, esperado {expected_trading_date} (desfase: {days_diff} días)"
         
     def download_data(self, ticker: str, period: str = "1y", interval: str = "1d", max_retries: int = 3) -> pd.DataFrame:
         """
@@ -104,6 +195,51 @@ class SVGASystem:
                     # Rellenar NaN si hay pocos
                     if df[required_cols].isna().any().any():
                         df[required_cols] = df[required_cols].ffill().bfill()
+                    
+                    # === VERIFICACIÓN DE FECHA (NUEVO) ===
+                    # Solo verificar actualización para intervalos diarios
+                    if i == "1d":
+                        is_current, date_msg = self.is_data_current(df, max_days_behind=2)
+                        if not is_current:
+                            print(f"   ⚠️ {date_msg}")
+                            # Si los datos están muy desfasados (>2 días), intentar descarga más agresiva
+                            days_behind = (self.get_last_trading_date() - df.index[-1].date()).days if isinstance(df.index[-1], pd.Timestamp) else 0
+                            if days_behind > 2 and interval == "1d":
+                                # Intentar forzar descarga con start/end dates específicas
+                                try:
+                                    print(f"   🔄 Intentando descarga forzada con fechas específicas...")
+                                    expected_date = self.get_last_trading_date()
+                                    start_date = expected_date - timedelta(days=365)  # Último año
+                                    end_date = expected_date + timedelta(days=1)  # Incluir hoy
+                                    
+                                    df_refresh = yf.download(
+                                        ticker, 
+                                        start=start_date, 
+                                        end=end_date,
+                                        interval=i,
+                                        progress=False,
+                                        timeout=15
+                                    )
+                                    
+                                    if not df_refresh.empty and len(df_refresh) > 20:
+                                        # Verificar que la nueva descarga esté más actualizada
+                                        if isinstance(df_refresh.index[-1], pd.Timestamp):
+                                            new_last_date = df_refresh.index[-1].date()
+                                            old_last_date = df.index[-1].date() if isinstance(df.index[-1], pd.Timestamp) else df.index[-1]
+                                            
+                                            if new_last_date >= old_last_date:
+                                                df = df_refresh
+                                                df.columns = [col[0].lower() if isinstance(col, tuple) else col.lower() for col in df.columns]
+                                                print(f"   ✅ Datos actualizados mediante descarga forzada (última fecha: {new_last_date})")
+                                except Exception as refresh_error:
+                                    print(f"   ⚠️ No se pudo forzar actualización: {refresh_error}")
+                                    # Continuar con los datos originales pero con advertencia
+                        else:
+                            print(f"   ✅ {date_msg}")
+                    else:
+                        # Para intervalos semanales/mensuales, solo mostrar la última fecha
+                        last_date = df.index[-1].date() if isinstance(df.index[-1], pd.Timestamp) else df.index[-1]
+                        print(f"   📅 Última fecha de datos: {last_date}")
                     
                     # Éxito
                     if strategy_idx > 0 or attempt > 0:
@@ -258,9 +394,15 @@ class SVGASystem:
         latest = df.iloc[-1]
         prev = df.iloc[-2]
         
+        # Usar la fecha del último día de trading esperado para el timestamp
+        # Esto refleja la fecha del análisis, no necesariamente la fecha del último dato
+        # (que puede estar desfasada si yfinance no ha actualizado los datos)
+        last_trading_date = self.get_last_trading_date()
+        signal_timestamp = last_trading_date.strftime('%Y-%m-%d %H:%M:%S')
+        
         signals = {
             "ticker": ticker,
-            "timestamp": str(df.index[-1]),
+            "timestamp": signal_timestamp,
             "price_current": float(latest['close']),
             "filters": {},
             "alerts": [],

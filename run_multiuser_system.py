@@ -11,10 +11,12 @@ import sys
 import os
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import schedule
+import pytz
 
 # Cargar variables de entorno desde .env (debe ser lo primero)
 from dotenv import load_dotenv
@@ -382,8 +384,32 @@ class MultiUserAnalysisSystem:
             }
 
 
+def is_market_day() -> bool:
+    """
+    Verifica si hoy es un día hábil del mercado (NYSE/NASDAQ)
+    
+    Returns:
+        True si es día hábil, False en caso contrario
+    """
+    now_ny = datetime.now(pytz.timezone('America/New_York'))
+    weekday = now_ny.weekday()  # 0=Lunes, 6=Domingo
+    
+    # El mercado está cerrado los sábados (5) y domingos (6)
+    if weekday >= 5:
+        return False
+    
+    # Verificar si es después del cierre del mercado (4:00 PM ET)
+    # Si es antes de las 4 PM, aún no tenemos datos del día completo
+    if now_ny.hour < 16:
+        return False
+    
+    # Por ahora, asumimos que si es día de semana y después de las 4 PM, es día hábil
+    # Nota: No verifica feriados, pero el sistema puede fallar graciosamente si no hay datos
+    return True
+
+
 def main():
-    """Función principal - Ejecución continua con intervalos"""
+    """Función principal - Ejecución programada con schedule o continua"""
     
     # ===== CONFIGURACIÓN =====
     # Para Heroku Eco: usar modo secuencial (max_workers=1)
@@ -391,14 +417,26 @@ def main():
     MAX_WORKERS = int(os.environ.get('MAX_WORKERS', '1'))
     PARALLEL_MODE = MAX_WORKERS > 1
     
-    # Intervalo entre ejecuciones (en minutos)
+    # Intervalo entre ejecuciones (en minutos) - para modo continuo
     INTERVAL_MINUTES = int(os.environ.get('SVGA_INTERVAL_MINUTES', '15'))
+    
+    # Configuración de schedule
+    USE_SCHEDULE = os.environ.get('USE_SCHEDULE', 'true').lower() == 'true'
+    SCHEDULE_TIME = os.environ.get('SCHEDULE_TIME', '16:30')  # 4:30 PM ET por defecto (después del cierre)
+    SCHEDULE_DAYS = os.environ.get('SCHEDULE_DAYS', 'monday,tuesday,wednesday,thursday,friday').lower()
     
     # ===== INICIALIZAR SISTEMA =====
     print("🚀 Iniciando Sistema Multi-Usuario con Supabase...")
     print(f"   - Max Workers: {MAX_WORKERS}")
     print(f"   - Modo: {'PARALELO' if PARALLEL_MODE else 'SECUENCIAL'}")
-    print(f"   - Intervalo: {INTERVAL_MINUTES} minutos\n")
+    
+    if USE_SCHEDULE:
+        print(f"   - Modo: PROGRAMADO (Schedule)")
+        print(f"   - Horario: {SCHEDULE_TIME} ET en días: {SCHEDULE_DAYS}")
+    else:
+        print(f"   - Modo: CONTINUO")
+        print(f"   - Intervalo: {INTERVAL_MINUTES} minutos")
+    print()
     
     try:
         system = MultiUserAnalysisSystem(max_workers=MAX_WORKERS)
@@ -416,8 +454,79 @@ def main():
         system.run_full_cycle(parallel=PARALLEL_MODE)
         print("\n✅ Ejecución única completada. Finalizando...")
         
+    elif USE_SCHEDULE:
+        # MODO: Ejecución programada con schedule
+        print("🔄 MODO: Ejecución programada (Schedule)\n")
+        print(f"⏰ El sistema se ejecutará automáticamente a las {SCHEDULE_TIME} ET")
+        print(f"   en los siguientes días: {SCHEDULE_DAYS}\n")
+        
+        def scheduled_job():
+            """Función que se ejecuta en el horario programado"""
+            print("\n" + "="*80)
+            print(f"⏰ EJECUCIÓN PROGRAMADA - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print("="*80 + "\n")
+            
+            # Verificar si es día hábil
+            if not is_market_day():
+                print("⚠️ Hoy no es un día hábil del mercado. Ejecución omitida.")
+                print("   (El mercado está cerrado los fines de semana)\n")
+                return
+            
+            try:
+                cycle_result = system.run_full_cycle(parallel=PARALLEL_MODE)
+                
+                if cycle_result['success']:
+                    print(f"✅ Ejecución programada completada exitosamente")
+                else:
+                    print(f"⚠️ Ejecución programada completada con errores")
+                    
+            except Exception as e:
+                print(f"❌ Error en ejecución programada: {e}")
+                traceback.print_exc()
+        
+        # Configurar schedule según los días especificados
+        days_map = {
+            'monday': schedule.every().monday,
+            'tuesday': schedule.every().tuesday,
+            'wednesday': schedule.every().wednesday,
+            'thursday': schedule.every().thursday,
+            'friday': schedule.every().friday,
+            'saturday': schedule.every().saturday,
+            'sunday': schedule.every().sunday
+        }
+        
+        # Parsear días y configurar schedule
+        schedule_days_list = [d.strip() for d in SCHEDULE_DAYS.split(',')]
+        for day in schedule_days_list:
+            if day in days_map:
+                days_map[day].at(SCHEDULE_TIME).do(scheduled_job)
+                print(f"✅ Programado para {day.capitalize()} a las {SCHEDULE_TIME}")
+        
+        print("\n🔄 Ejecutando scheduler... (Presiona Ctrl+C para detener)\n")
+        
+        # Ejecutar inmediatamente si es día hábil y ya pasó la hora programada
+        try:
+            # Verificar si debemos ejecutar ahora
+            now_ny = datetime.now(pytz.timezone('America/New_York'))
+            schedule_time_parts = SCHEDULE_TIME.split(':')
+            schedule_hour = int(schedule_time_parts[0])
+            schedule_minute = int(schedule_time_parts[1]) if len(schedule_time_parts) > 1 else 0
+            
+            # Si ya pasó la hora programada y es día hábil, ejecutar una vez
+            if is_market_day() and now_ny.hour >= schedule_hour:
+                print("📊 Ejecutando análisis inicial (ya pasó la hora programada)...\n")
+                scheduled_job()
+            
+            # Mantener el scheduler corriendo
+            while True:
+                schedule.run_pending()
+                time.sleep(60)  # Verificar cada minuto
+                
+        except KeyboardInterrupt:
+            print("\n🛑 Ejecución detenida por el usuario. ¡Hasta pronto!")
+    
     else:
-        # MODO: Ejecución continua
+        # MODO: Ejecución continua (sin schedule)
         print("🔄 MODO: Ejecución continua\n")
         
         ciclo = 1
@@ -428,6 +537,12 @@ def main():
                 print("\n" + "="*80)
                 print(f"🔁 CICLO #{ciclo} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 print("="*80 + "\n")
+                
+                # Verificar si es día hábil antes de ejecutar
+                if not is_market_day():
+                    print("⚠️ No es día hábil del mercado. Esperando...\n")
+                    time.sleep(interval_seconds)
+                    continue
                 
                 try:
                     cycle_result = system.run_full_cycle(parallel=PARALLEL_MODE)
