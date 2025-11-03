@@ -7,22 +7,104 @@ Autor: AIDA
 Fecha: 27 de octubre de 2025
 """
 
-import sys
 import os
+import sys
 import time
-import traceback
-from datetime import datetime, timedelta
-from typing import Dict, List
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import traceback
+from functools import lru_cache
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import schedule
 import pytz
-
-# Cargar variables de entorno desde .env (debe ser lo primero)
+import pandas_market_calendars as mcal
 from dotenv import load_dotenv
+
+
 load_dotenv()
 
 # Configurar encoding UTF-8 para el stdout (Windows compatibility)
+NY_TZ = pytz.timezone('America/New_York')
+
+
+@lru_cache(maxsize=1)
+def _get_market_calendar():
+    """Return cached NYSE calendar instance."""
+    return mcal.get_calendar('XNYS')
+
+
+def get_market_day_status(now: Optional[datetime] = None) -> Dict[str, object]:
+    """Return structured information about today's NYSE trading session."""
+    if now is None:
+        now = datetime.now(NY_TZ)
+    else:
+        now = now.astimezone(NY_TZ)
+
+    cal = _get_market_calendar()
+    schedule = cal.schedule(start_date=now.date(), end_date=now.date())
+
+    status: Dict[str, object] = {
+        'date': now.date(),
+        'weekday': now.strftime('%A'),
+        'now': now,
+        'is_trading_day': False,
+        'in_session': False,
+        'has_closed': False,
+        'market_open': None,
+        'market_close': None,
+        'reason': 'Mercado cerrado (sin sesión programada)'
+    }
+
+    if schedule.empty:
+        return status
+
+    session = schedule.iloc[0]
+    market_open = session['market_open'].tz_convert(NY_TZ)
+    market_close = session['market_close'].tz_convert(NY_TZ)
+
+    status.update({
+        'is_trading_day': True,
+        'market_open': market_open,
+        'market_close': market_close,
+        'in_session': market_open <= now <= market_close,
+        'has_closed': now >= market_close,
+    })
+
+    if now < market_open:
+        status['reason'] = (
+            f"Mercado aún no abre (abre a las {market_open.strftime('%H:%M %Z')})"
+        )
+    elif now > market_close:
+        status['reason'] = (
+            f"Mercado ya cerró (cerró a las {market_close.strftime('%H:%M %Z')})"
+        )
+    else:
+        status['reason'] = "Mercado en sesión"
+
+    return status
+
+
+def is_market_day(
+    now: Optional[datetime] = None,
+    *,
+    require_session: bool = False,
+    require_close: bool = False
+) -> bool:
+    """Determine if NYSE is considered open for processing given the constraints."""
+    status = get_market_day_status(now)
+
+    if not status['is_trading_day']:
+        return False
+
+    if require_session and not status['in_session']:
+        return False
+
+    if require_close and not status['has_closed']:
+        return False
+
+    return True
 if sys.platform == 'win32':
     import codecs
     if hasattr(sys.stdout, 'buffer'):
@@ -382,32 +464,6 @@ class MultiUserAnalysisSystem:
                 'error': str(e),
                 'timestamp': datetime.now().isoformat()
             }
-
-
-def is_market_day() -> bool:
-    """
-    Verifica si hoy es un día hábil del mercado (NYSE/NASDAQ)
-    
-    Returns:
-        True si es día hábil, False en caso contrario
-    """
-    now_ny = datetime.now(pytz.timezone('America/New_York'))
-    weekday = now_ny.weekday()  # 0=Lunes, 6=Domingo
-    
-    # El mercado está cerrado los sábados (5) y domingos (6)
-    if weekday >= 5:
-        return False
-    
-    # Verificar si es después del cierre del mercado (4:00 PM ET)
-    # Si es antes de las 4 PM, aún no tenemos datos del día completo
-    if now_ny.hour < 16:
-        return False
-    
-    # Por ahora, asumimos que si es día de semana y después de las 4 PM, es día hábil
-    # Nota: No verifica feriados, pero el sistema puede fallar graciosamente si no hay datos
-    return True
-
-
 def main():
     """Función principal - Ejecución programada con schedule o continua"""
     
@@ -467,9 +523,29 @@ def main():
             print("="*80 + "\n")
             
             # Verificar si es día hábil
-            if not is_market_day():
+            status = get_market_day_status()
+            if not status['is_trading_day']:
                 print("⚠️ Hoy no es un día hábil del mercado. Ejecución omitida.")
-                print("   (El mercado está cerrado los fines de semana)\n")
+                print(f"   Detalle: {status['reason']}\n")
+                return
+
+            if not status['in_session'] and not status['has_closed']:
+                market_open = status.get('market_open')
+                market_close = status.get('market_close')
+                open_str = (
+                    market_open.strftime('%H:%M %Z')
+                    if isinstance(market_open, datetime)
+                    else 'N/A'
+                )
+                close_str = (
+                    market_close.strftime('%H:%M %Z')
+                    if isinstance(market_close, datetime)
+                    else 'N/A'
+                )
+
+                print("ℹ️ Mercado aún fuera de sesión.")
+                print(f"   Apertura: {open_str}")
+                print(f"   Cierre: {close_str}\n")
                 return
             
             try:
@@ -507,13 +583,17 @@ def main():
         # Ejecutar inmediatamente si es día hábil y ya pasó la hora programada
         try:
             # Verificar si debemos ejecutar ahora
-            now_ny = datetime.now(pytz.timezone('America/New_York'))
+            now_ny = datetime.now(NY_TZ)
             schedule_time_parts = SCHEDULE_TIME.split(':')
             schedule_hour = int(schedule_time_parts[0])
             schedule_minute = int(schedule_time_parts[1]) if len(schedule_time_parts) > 1 else 0
             
+            status_now = get_market_day_status(now_ny)
+            current_minutes = now_ny.hour * 60 + now_ny.minute
+            schedule_minutes = schedule_hour * 60 + schedule_minute
+
             # Si ya pasó la hora programada y es día hábil, ejecutar una vez
-            if is_market_day() and now_ny.hour >= schedule_hour:
+            if status_now['is_trading_day'] and current_minutes >= schedule_minutes:
                 print("📊 Ejecutando análisis inicial (ya pasó la hora programada)...\n")
                 scheduled_job()
             
@@ -539,8 +619,18 @@ def main():
                 print("="*80 + "\n")
                 
                 # Verificar si es día hábil antes de ejecutar
-                if not is_market_day():
+                status_loop = get_market_day_status()
+                if not status_loop['is_trading_day']:
                     print("⚠️ No es día hábil del mercado. Esperando...\n")
+                    print(f"   Detalle: {status_loop['reason']}\n")
+                    time.sleep(interval_seconds)
+                    continue
+
+                if not status_loop['in_session'] and not status_loop['has_closed']:
+                    print("ℹ️ Mercado aún fuera de sesión. Esperando apertura...\n")
+                    next_open = status_loop.get('market_open')
+                    if isinstance(next_open, datetime):
+                        print(f"   Apertura programada: {next_open.strftime('%Y-%m-%d %H:%M %Z')}\n")
                     time.sleep(interval_seconds)
                     continue
                 

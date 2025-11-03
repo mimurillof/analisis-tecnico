@@ -11,3 +11,5 @@ dotenv
 schedule>=1.2.0
 pandas-market-calendars>=4.3.0
 pytz>=2023.3
+pandas_market_calendars
+dotenv
