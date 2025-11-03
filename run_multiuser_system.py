@@ -465,7 +465,7 @@ class MultiUserAnalysisSystem:
                 'timestamp': datetime.now().isoformat()
             }
 def main():
-    """Función principal - Ejecución programada con schedule o continua"""
+    """Función principal - Ejecución continua con detección de horario de mercado"""
     
     # ===== CONFIGURACIÓN =====
     # Para Heroku Eco: usar modo secuencial (max_workers=1)
@@ -473,25 +473,21 @@ def main():
     MAX_WORKERS = int(os.environ.get('MAX_WORKERS', '1'))
     PARALLEL_MODE = MAX_WORKERS > 1
     
-    # Intervalo entre ejecuciones (en minutos) - para modo continuo
+    # Intervalo entre ejecuciones (en minutos) - DURANTE HORARIO DE MERCADO
     INTERVAL_MINUTES = int(os.environ.get('SVGA_INTERVAL_MINUTES', '15'))
     
-    # Configuración de schedule
-    USE_SCHEDULE = os.environ.get('USE_SCHEDULE', 'true').lower() == 'true'
-    SCHEDULE_TIME = os.environ.get('SCHEDULE_TIME', '16:30')  # 4:30 PM ET por defecto (después del cierre)
-    SCHEDULE_DAYS = os.environ.get('SCHEDULE_DAYS', 'monday,tuesday,wednesday,thursday,friday').lower()
+    # Intervalo cuando el mercado está cerrado (verificar cada hora)
+    CLOSED_CHECK_MINUTES = int(os.environ.get('CLOSED_CHECK_MINUTES', '60'))
+    
+    # Intervalo cuando el mercado está cerrado (verificar cada hora)
+    CLOSED_CHECK_MINUTES = int(os.environ.get('CLOSED_CHECK_MINUTES', '60'))
     
     # ===== INICIALIZAR SISTEMA =====
     print("🚀 Iniciando Sistema Multi-Usuario con Supabase...")
     print(f"   - Max Workers: {MAX_WORKERS}")
     print(f"   - Modo: {'PARALELO' if PARALLEL_MODE else 'SECUENCIAL'}")
-    
-    if USE_SCHEDULE:
-        print(f"   - Modo: PROGRAMADO (Schedule)")
-        print(f"   - Horario: {SCHEDULE_TIME} ET en días: {SCHEDULE_DAYS}")
-    else:
-        print(f"   - Modo: CONTINUO")
-        print(f"   - Intervalo: {INTERVAL_MINUTES} minutos")
+    print(f"   - Intervalo durante horario de mercado: {INTERVAL_MINUTES} minutos")
+    print(f"   - Intervalo fuera de horario: {CLOSED_CHECK_MINUTES} minutos")
     print()
     
     try:
@@ -505,156 +501,96 @@ def main():
     RUN_ONCE = os.environ.get('RUN_ONCE', 'false').lower() == 'true'
     
     if RUN_ONCE:
-        # MODO: Ejecutar una sola vez
+        # MODO: Ejecutar una sola vez (ignora horarios)
         print("🔄 MODO: Ejecución única\n")
         system.run_full_cycle(parallel=PARALLEL_MODE)
         print("\n✅ Ejecución única completada. Finalizando...")
-        
-    elif USE_SCHEDULE:
-        # MODO: Ejecución programada con schedule
-        print("🔄 MODO: Ejecución programada (Schedule)\n")
-        print(f"⏰ El sistema se ejecutará automáticamente a las {SCHEDULE_TIME} ET")
-        print(f"   en los siguientes días: {SCHEDULE_DAYS}\n")
-        
-        def scheduled_job():
-            """Función que se ejecuta en el horario programado"""
-            print("\n" + "="*80)
-            print(f"⏰ EJECUCIÓN PROGRAMADA - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print("="*80 + "\n")
+        return
+    
+    # MODO: Ejecución continua adaptativa (cada 15 min en horario, cada hora fuera)
+    print("🔄 MODO: Ejecución continua adaptativa")
+    print("   📊 Durante sesión: ciclo cada 15 minutos")
+    print("   🌙 Fuera de sesión: verificación cada hora\n")
+    
+    ciclo = 1
+    
+    try:
+        while True:
+            now = datetime.now(NY_TZ)
+            status = get_market_day_status(now)
             
-            # Verificar si es día hábil
-            status = get_market_day_status()
-            if not status['is_trading_day']:
-                print("⚠️ Hoy no es un día hábil del mercado. Ejecución omitida.")
-                print(f"   Detalle: {status['reason']}\n")
-                return
-
-            if not status['in_session'] and not status['has_closed']:
+            print("\n" + "="*80)
+            print(f"🔁 CICLO #{ciclo} - {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            print("="*80)
+            print(f"📅 {status['weekday']}, {status['date']}")
+            print(f"📊 Estado: {status['reason']}")
+            
+            if status['is_trading_day']:
                 market_open = status.get('market_open')
                 market_close = status.get('market_close')
-                open_str = (
-                    market_open.strftime('%H:%M %Z')
-                    if isinstance(market_open, datetime)
-                    else 'N/A'
-                )
-                close_str = (
-                    market_close.strftime('%H:%M %Z')
-                    if isinstance(market_close, datetime)
-                    else 'N/A'
-                )
-
-                print("ℹ️ Mercado aún fuera de sesión.")
-                print(f"   Apertura: {open_str}")
-                print(f"   Cierre: {close_str}\n")
-                return
+                market_open_str = market_open.strftime('%H:%M') if isinstance(market_open, datetime) else 'N/A'
+                market_close_str = market_close.strftime('%H:%M') if isinstance(market_close, datetime) else 'N/A'
+                print(f"⏰ Sesión: {market_open_str} - {market_close_str} ET")
             
-            try:
-                cycle_result = system.run_full_cycle(parallel=PARALLEL_MODE)
-                
-                if cycle_result['success']:
-                    print(f"✅ Ejecución programada completada exitosamente")
-                else:
-                    print(f"⚠️ Ejecución programada completada con errores")
-                    
-            except Exception as e:
-                print(f"❌ Error en ejecución programada: {e}")
-                traceback.print_exc()
-        
-        # Configurar schedule según los días especificados
-        days_map = {
-            'monday': schedule.every().monday,
-            'tuesday': schedule.every().tuesday,
-            'wednesday': schedule.every().wednesday,
-            'thursday': schedule.every().thursday,
-            'friday': schedule.every().friday,
-            'saturday': schedule.every().saturday,
-            'sunday': schedule.every().sunday
-        }
-        
-        # Parsear días y configurar schedule
-        schedule_days_list = [d.strip() for d in SCHEDULE_DAYS.split(',')]
-        for day in schedule_days_list:
-            if day in days_map:
-                days_map[day].at(SCHEDULE_TIME).do(scheduled_job)
-                print(f"✅ Programado para {day.capitalize()} a las {SCHEDULE_TIME}")
-        
-        print("\n🔄 Ejecutando scheduler... (Presiona Ctrl+C para detener)\n")
-        
-        # Ejecutar inmediatamente si es día hábil y ya pasó la hora programada
-        try:
-            # Verificar si debemos ejecutar ahora
-            now_ny = datetime.now(NY_TZ)
-            schedule_time_parts = SCHEDULE_TIME.split(':')
-            schedule_hour = int(schedule_time_parts[0])
-            schedule_minute = int(schedule_time_parts[1]) if len(schedule_time_parts) > 1 else 0
+            print("="*80 + "\n")
             
-            status_now = get_market_day_status(now_ny)
-            current_minutes = now_ny.hour * 60 + now_ny.minute
-            schedule_minutes = schedule_hour * 60 + schedule_minute
-
-            # Si ya pasó la hora programada y es día hábil, ejecutar una vez
-            if status_now['is_trading_day'] and current_minutes >= schedule_minutes:
-                print("📊 Ejecutando análisis inicial (ya pasó la hora programada)...\n")
-                scheduled_job()
+            # Decidir si ejecutar según el estado del mercado
+            should_run = False
+            wait_minutes = CLOSED_CHECK_MINUTES
             
-            # Mantener el scheduler corriendo
-            while True:
-                schedule.run_pending()
-                time.sleep(60)  # Verificar cada minuto
+            if not status['is_trading_day']:
+                # Fin de semana o feriado
+                print("⚠️ Mercado cerrado (fin de semana/feriado)")
+                print(f"   ⏱️ Próxima verificación en {CLOSED_CHECK_MINUTES} minutos\n")
+                wait_minutes = CLOSED_CHECK_MINUTES
                 
-        except KeyboardInterrupt:
-            print("\n🛑 Ejecución detenida por el usuario. ¡Hasta pronto!")
-    
-    else:
-        # MODO: Ejecución continua (sin schedule)
-        print("🔄 MODO: Ejecución continua\n")
-        
-        ciclo = 1
-        interval_seconds = INTERVAL_MINUTES * 60
-        
-        try:
-            while True:
-                print("\n" + "="*80)
-                print(f"🔁 CICLO #{ciclo} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                print("="*80 + "\n")
+            elif status['in_session']:
+                # Mercado ABIERTO - ejecutar cada 15 minutos
+                print("� MERCADO ABIERTO - Ejecutando análisis...\n")
+                should_run = True
+                wait_minutes = INTERVAL_MINUTES
                 
-                # Verificar si es día hábil antes de ejecutar
-                status_loop = get_market_day_status()
-                if not status_loop['is_trading_day']:
-                    print("⚠️ No es día hábil del mercado. Esperando...\n")
-                    print(f"   Detalle: {status_loop['reason']}\n")
-                    time.sleep(interval_seconds)
-                    continue
-
-                if not status_loop['in_session'] and not status_loop['has_closed']:
-                    print("ℹ️ Mercado aún fuera de sesión. Esperando apertura...\n")
-                    next_open = status_loop.get('market_open')
-                    if isinstance(next_open, datetime):
-                        print(f"   Apertura programada: {next_open.strftime('%Y-%m-%d %H:%M %Z')}\n")
-                    time.sleep(interval_seconds)
-                    continue
+            elif status['has_closed']:
+                # Mercado ya cerró hoy - ejecutar una vez después del cierre
+                print("🔵 Mercado cerrado - Ejecutando análisis post-cierre...\n")
+                should_run = True
+                wait_minutes = CLOSED_CHECK_MINUTES  # Luego esperar hasta mañana
                 
+            else:
+                # Mercado aún no abre
+                next_open = status['market_open']
+                if isinstance(next_open, datetime):
+                    print(f"⏰ Mercado abre a las {next_open.strftime('%H:%M %Z')}")
+                print(f"   ⏱️ Próxima verificación en {CLOSED_CHECK_MINUTES} minutos\n")
+                wait_minutes = CLOSED_CHECK_MINUTES
+            
+            # Ejecutar ciclo si corresponde
+            if should_run:
                 try:
                     cycle_result = system.run_full_cycle(parallel=PARALLEL_MODE)
                     
                     if cycle_result['success']:
-                        print(f"✅ Ciclo #{ciclo} completado exitosamente")
+                        print(f"\n✅ Ciclo #{ciclo} completado exitosamente")
+                        print(f"   📊 Usuarios procesados: {cycle_result.get('users_processed', 0)}")
+                        print(f"   ⏱️ Duración: {cycle_result.get('duration_minutes', 0):.2f} minutos")
                     else:
-                        print(f"⚠️ Ciclo #{ciclo} completado con errores")
+                        print(f"\n⚠️ Ciclo #{ciclo} completado con errores")
                     
                 except Exception as e:
-                    print(f"❌ Error en ciclo #{ciclo}: {e}")
+                    print(f"\n❌ Error en ciclo #{ciclo}: {e}")
                     traceback.print_exc()
-                
-                ciclo += 1
-                
-                print(f"\n⏱️ Esperando {INTERVAL_MINUTES} minutos para próximo ciclo...")
-                print("   (Presiona Ctrl+C para detener)\n")
-                
-                time.sleep(interval_seconds)
-                
-        except KeyboardInterrupt:
-            print("\n🛑 Ejecución detenida por el usuario. ¡Hasta pronto!")
+            
+            ciclo += 1
+            
+            # Esperar según el estado del mercado
+            wait_seconds = wait_minutes * 60
+            print(f"\n⏱️ Esperando {wait_minutes} minutos hasta próximo ciclo...")
+            print(f"   (Presiona Ctrl+C para detener)\n")
+            
+            time.sleep(wait_seconds)
+            
+    except KeyboardInterrupt:
+        print("\n🛑 Ejecución detenida por el usuario. ¡Hasta pronto!")
 
 
 if __name__ == "__main__":
